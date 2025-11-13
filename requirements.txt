@@ -1,0 +1,11 @@
+streamlit
+pandas
+requests
+google-generativeai
+fpdf2
+transformers
+torch
+torchvision
+pillow
+scipy
+librosa

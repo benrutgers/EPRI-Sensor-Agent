@@ -124,7 +124,7 @@ with st.sidebar:
     
     # The name of your Hugging Face model
     # IMPORTANT: Change this to your username and repo name!
-    HF_REPO_NAME = "a-yding/epri-das-classifier" # <-- Make sure this is correct!
+    HF_REPO_NAME = "benrutgers/epri-das-classifier" # <-- Make sure this is correct!
 
 # --- Main App Body ---
 st.title("🔬 NEC & EPRI | DAS Fault Detection Agent")
@@ -214,4 +214,5 @@ if uploaded_file is not None:
     else:
         with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
             report_text = get_ai_report(GEMINI_API_KEY, num_chunks, vandalism_count, HF_TOKEN)
+
             st.markdown(report_text)

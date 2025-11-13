@@ -9,3 +9,4 @@ torchvision
 pillow
 scipy
 librosa
+matplotlib

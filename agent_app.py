@@ -2,8 +2,8 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import librosa
-import matplotlib.pyplot as plt # We *still* need this for the colormap
-from matplotlib import cm # NEW: Import the colormap library
+import matplotlib.pyplot as plt
+from matplotlib import cm
 from scipy.signal import butter, filtfilt
 import google.generativeai as genai
 from PIL import Image
@@ -12,8 +12,7 @@ import math
 import os
 import io
 
-# --- (!!!) FIX 1: ROBUST IMPORT (!!!) ---
-# This makes our app "version-proof"
+# --- (FIX 1) ROBUST IMPORT ---
 try:
     from transformers import ViTImageProcessor as ViTProcessor
 except ImportError:
@@ -30,63 +29,63 @@ st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="🔬", layout="
 def load_ai_model(hf_repo_name, hf_token):
     print("Loading AI model from Hugging Face...")
     try:
-        # We now use our "version-proof" class 'ViTProcessor'
         processor = ViTProcessor.from_pretrained(hf_repo_name, token=hf_token)
         model = ViTForImageClassification.from_pretrained(hf_repo_name, token=hf_token)
         print("Model loaded successfully.")
         return processor, model
     except Exception as e:
-        st.error(f"Error loading AI model: {e}. Check your Hugging Face repo name and token.")
+        st.error(f"Error loading AI model: {e}. Check your Hugf Face repo name and token.")
         return None, None
 
-# --- 3. Load Our "Settings" (from the config.ini we created) ---
+# --- 3. Load Our "Settings" ---
 FS = 5000.0
 HP_CUTOFF = 20.0
 HP_ORDER = 4
 VPCT = 99.0
 CHUNK_SECONDS = 0.2
 DPI = 100
-CHUNK_SAMPLES = int(FS * CHUNK_SECONDS) # 1000 samples
+CHUNK_SAMPLES = int(FS * CHUNK_SECONDS)
 
-# --- 4. Our Professional Signal Processing Functions ---
+# --- 4. Professional Signal Processing Functions ---
 def highpass_filter(S, fs, cutoff, order):
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
 
-# --- (!!!) FIX 2: PROFESSIONAL IMAGE CREATION (!!!) ---
-# We are no longer using plt.savefig(). This is a direct,
-# data-driven conversion from a NumPy array to an RGB image.
+# --- (FIX 1: THE CRASH) ---
+# This is the new, robust, "memory-leak-proof" function
 def create_heatmap_image(S_chunk):
-    # 1. Calculate the robust color limits (from your script)
+    # 1. Create a *specific* figure and axis
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    # 2. Normalize and apply colormap
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0: r = 1.0
-    vmin = -r
-    vmax = r
-
-    # 2. Normalize the chunk from -r to +r into a 0-1 scale
-    # np.clip ensures no values are outside this range
-    normalized_chunk = (np.clip(S_chunk, vmin, vmax) - vmin) / (vmax - vmin)
-
-    # 3. Apply the 'seismic' colormap *directly* to the data
-    # This converts our (1000, 800) array to a (1000, 800, 4) RGBA array
+    normalized_chunk = (np.clip(S_chunk, -r, r) + r) / (2 * r)
     cmap = cm.get_cmap('seismic')
     rgba_image = cmap(normalized_chunk)
-    
-    # 4. Convert to a standard 8-bit (0-255) RGB image
-    # We multiply by 255 and take the first 3 channels (RGB),
-    # discarding the 4th (Alpha).
     rgb_array = (rgba_image[:, :, :3] * 255).astype(np.uint8)
     
-    # 5. Convert this *perfect* RGB array into a PIL Image
-    return Image.fromarray(rgb_array)
+    # 3. Use the axis to show the image
+    ax.imshow(rgb_array, aspect='auto') # We show the *RGB array*
+    ax.axis('off')
+    
+    # 4. Save the *specific figure* to the buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
+    
+    # 5. (CRITICAL) Explicitly close *this* figure
+    plt.close(fig)
+    
+    buf.seek(0)
+    return Image.open(buf)
 
 # --- 5. Our AI "Brain" (The Gemini LLM) Function ---
 @st.cache_data
 def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, hf_token):
     try:
-        genai.configure(api_key=_gemini_api_key) # Use the passed-in key
+        genai.configure(api_key=_gemini_api_key)
         model = genai.GenerativeModel('models/gemini-flash-latest')
         
         if vandalism_count > 0:
@@ -123,7 +122,9 @@ st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="🔬", layout="
 
 # --- Sidebar ---
 with st.sidebar:
-    st.image("https://raw.githubusercontent.com/benrutgers/epri-dashboard/main/nec_logo.jpg", width=200) 
+    # --- (FIX 2: THE LOGO) ---
+    # We now load the logo *locally* from the GitHub repo
+    st.image("nec_logo.jpg", width=200) 
     st.subheader("Configuration")
     st.write("""
     This app uses a custom-trained AI (ViT) model to analyze .npy files 
@@ -136,8 +137,7 @@ with st.sidebar:
     GEMINI_API_KEY = st.secrets.get("GOOGLE_AI_API_KEY")
     HF_TOKEN = st.secrets.get("HF_TOKEN")
     
-    # IMPORTANT: Make sure this is your correct repo name
-    HF_REPO_NAME = "benrutgers/epri-das-classifier" 
+    HF_REPO_NAME = "benrutgers/epri-das-classifier" # This is now correct
 
 # --- Main App Body ---
 st.title("🔬 NEC & EPRI | DAS Fault Detection Agent")

@@ -186,7 +186,7 @@ if uploaded_file is not None:
 
             
             # 2. Process and predict with our AI "Eyes"
-            inputs = processor(images=heatmap_image, return_tensors="pt")
+            inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
             with torch.no_grad():
                 outputs = model(**inputs)
             
@@ -225,4 +225,5 @@ if uploaded_file is not None:
             report_text = get_ai_report(GEMINI_API_KEY, num_chunks, vandalism_count, HF_TOKEN)
 
             st.markdown(report_text)
+
 

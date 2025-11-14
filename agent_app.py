@@ -2,8 +2,8 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import librosa
-import matplotlib.pyplot as plt 
-from matplotlib import cm # NEW: Import the colormap library
+import matplotlib.pyplot as plt
+from matplotlib import cm
 from scipy.signal import butter, filtfilt
 import google.generativeai as genai
 from PIL import Image
@@ -11,8 +11,10 @@ import torch
 import math
 import os
 import io
+import datetime # NEW: To get the real date and time
+from fpdf import FPDF # NEW: To create the PDF
 
-# --- (FIX 1) ROBUST IMPORT ---
+# --- (FIX) ROBUST IMPORT ---
 try:
     from transformers import ViTImageProcessor as ViTProcessor
 except ImportError:
@@ -22,7 +24,8 @@ except ImportError:
 from transformers import ViTForImageClassification
 
 # --- 1. Page Setup ---
-st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="🔬", layout="wide")
+# (!!! FIX 1: THE ICON !!!)
+st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") # Changed icon
 
 # --- 2. Load Our "Engine" (The AI Model) ---
 @st.cache_resource
@@ -53,36 +56,72 @@ def highpass_filter(S, fs, cutoff, order):
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
 
-# --- (!!!) THIS IS THE REAL, PROFESSIONAL FIX (!!!) ---
-# We are now *mathematically* creating the image, not "screenshotting" a plot.
+# (!!! FIX 3: THE CRASH ON SECOND UPLOAD !!!)
+# This is the new, robust, "memory-leak-proof" function
 def create_heatmap_image(S_chunk):
-    # 1. Calculate the robust color limits (from your script)
+    # 1. Create a *specific* figure and axis
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    # 2. Normalize and apply colormap
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0: r = 1.0
-    vmin = -r
-    vmax = r
-
-    # 2. Normalize the chunk from -r to +r into a 0.0 to 1.0 scale
+    vmin, vmax = -r, r
     normalized_chunk = (np.clip(S_chunk.T, vmin, vmax) - vmin) / (vmax - vmin)
-
-    # 3. Apply the 'seismic' colormap *directly* to the data
-    # This converts our (800, 1000) array to a (800, 1000, 4) RGBA array
     cmap = cm.get_cmap('seismic')
     rgba_image_data = cmap(normalized_chunk)
-    
-    # 4. Convert to a standard 8-bit (0-255) RGB image
-    # We multiply by 255 and take the first 3 channels (RGB),
-    # discarding the 4th (Alpha). This is a clean, 3-channel array.
     rgb_array = (rgba_image_data[:, :, :3] * 255).astype(np.uint8)
     
-    # 5. Convert this *perfect* RGB array into a PIL Image
-    return Image.fromarray(rgb_array)
+    # 3. Use the axis to show the image
+    ax.imshow(rgb_array, aspect='auto') # We show the *RGB array*
+    ax.axis('off')
+    
+    # 4. Save the *specific figure* to the buffer
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
+    
+    # 5. (CRITICAL) Explicitly close *this* figure to prevent memory leak
+    plt.close(fig)
+    
+    buf.seek(0)
+    # 6. Return a *clean* RGB image
+    return Image.open(buf).convert("RGB")
+
+# --- (!!! FIX 4: PDF DOWNLOAD FUNCTION !!!) ---
+def create_pdf_report(report_text, current_time, vandalism_count):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # 1. Add the Logo
+    pdf.image("nec_logo.jpg", x=10, y=8, w=60)
+    pdf.ln(25) # Move down below the logo
+    
+    # 2. Add the Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, "NEC & EPRI Grid Operations Meteorological Report", 0, 1, 'C')
+    
+    # 3. Add the *Correct* Issuance Time
+    pdf.set_font("Arial", '', 12)
+    pdf.cell(0, 10, f"Issuance Time: {current_time}", 0, 1, 'C')
+    pdf.ln(5)
+    
+    # 4. Add System Info
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, f"System: NEC LS3300 DAS System", 0, 1, 'L')
+    pdf.cell(0, 10, f"Alert Level: {'CRITICAL' if vandalism_count > 0 else 'NORMAL'}", 0, 1, 'L')
+    pdf.ln(5)
+    
+    # 5. Add the AI Report Body
+    pdf.set_font("Arial", '', 11)
+    pdf.multi_cell(0, 5, report_text) # multi_cell handles line breaks
+    
+    # 6. Return the PDF data as 'bytes'
+    return bytes(pdf.output(dest='S'))
 
 # --- 5. Our AI "Brain" (The Gemini LLM) Function ---
 @st.cache_data
-def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, hf_token):
+def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
     try:
-        genai.configure(api_key=_gemini_api_key) # Use the passed-in key
+        genai.configure(api_key=_gemini_api_key) 
         model = genai.GenerativeModel('models/gemini-flash-latest')
         
         if vandalism_count > 0:
@@ -94,19 +133,27 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, hf_token):
             analysis = f"Analysis complete. All {total_chunks} 0.2-second chunks match the 'ambient' signature."
             recommendation = "No anomalies detected. The line is operating under normal conditions."
 
+        # (!!! FIX 2: THE AI HALLUCINATION !!!)
+        # We are now injecting the *real* data into the prompt
         prompt = f"""
         You are an expert NEC & EPRI DAS (Distributed Acoustic Sensing) system monitor.
-        Your task is to write a brief, professional fault analysis report.
+        Your task is to write a *brief, 2-paragraph* fault analysis report.
+        
+        IMPORTANT:
+        1.  Your response MUST be plain text only (no markdown, no "##", no "**").
+        2.  Do NOT invent a date or system name. They will be in the PDF header.
+        3.  Your response should begin *directly* with the "Detailed Analysis" paragraph.
 
-        FILE ANALYSIS:
+        CONTEXT:
+        - System: NEC LS3300 DAS System
+        - Report Issuance Time: {current_time}
         - Total 0.2-second chunks analyzed: {total_chunks}
         - "Vandalism" chunks detected: {vandalism_count}
         - Alert Level: {alert_level}
 
-        Write a 3-paragraph report:
-        1.  **Executive Summary:** State the Alert Level and the overall finding.
-        2.  **Detailed Analysis:** Explain *what* was found (or not found).
-        3.  **Recommendation:** Provide a clear, actionable recommendation for the grid operator.
+        Write the 2-paragraph report:
+        1.  **Detailed Analysis:** Explain *what* was found (or not found).
+        2.  **Recommendation:** Provide a clear, actionable recommendation.
         """
         response = model.generate_content(prompt)
         return response.text
@@ -115,11 +162,11 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, hf_token):
         return f"Error generating report: {e}"
 
 # --- 6. The Streamlit App GUI ---
-st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="🔬", layout="wide")
+st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") # ICON FIX
 
 # --- Sidebar ---
 with st.sidebar:
-    st.image("nec_logo.jpg", width=200) 
+    st.image("nec_logo.jpg", width=200) # LOGO FIX
     st.subheader("Configuration")
     st.write("""
     This app uses a custom-trained AI (ViT) model to analyze .npy files 
@@ -132,10 +179,10 @@ with st.sidebar:
     GEMINI_API_KEY = st.secrets.get("GOOGLE_AI_API_KEY")
     HF_TOKEN = st.secrets.get("HF_TOKEN")
     
-    HF_REPO_NAME = "benrutgers/epri-das-classifier" # This is now correct
+    HF_REPO_NAME = "benrutgers/epri-das-classifier" # This is correct
 
 # --- Main App Body ---
-st.title("🔬 NEC & EPRI | DAS Fault Detection Agent")
+st.title("🔬 NEC & EPRI | DAS Fault Detection Agent") # Icon is fixed in browser tab
 
 if not HF_TOKEN:
     st.error("Hugging Face token not set in Secrets. Cannot load AI model.")
@@ -146,7 +193,7 @@ if not model:
     st.stop()
 
 st.subheader("1. Upload a DAS Sensor File")
-uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"])
+uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"], key=f"uploader_{random.randint(1,10000)}")
 
 if uploaded_file is not None:
     st.success(f"Successfully loaded file: {uploaded_file.name}")
@@ -166,7 +213,6 @@ if uploaded_file is not None:
         
         vandalism_count = 0
         ambient_count = 0
-        results = []
         
         progress_bar = st.progress(0, text="Analyzing chunks...")
         
@@ -175,10 +221,8 @@ if uploaded_file is not None:
             end_index = start_index + CHUNK_SAMPLES
             S_chunk = S_final[start_index:end_index, :]
             
-            # 1. Create the heatmap image *in memory* (NEW, ROBUST METHOD)
             heatmap_image_rgb = create_heatmap_image(S_chunk)
             
-            # 2. Process and predict (passing a *list* of one)
             inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
             with torch.no_grad():
                 outputs = model(**inputs)
@@ -187,7 +231,6 @@ if uploaded_file is not None:
             predicted_class_idx = logits.argmax(-1).item()
             predicted_class = model.config.id2label[predicted_class_idx]
             
-            results.append(predicted_class)
             if predicted_class == "vandalism":
                 vandalism_count += 1
             else:
@@ -211,5 +254,24 @@ if uploaded_file is not None:
         st.error("Google AI API Key not set in Secrets. Cannot generate report.")
     else:
         with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
-            report_text = get_ai_report(GEMINI_API_KEY, num_chunks, vandalism_count, HF_TOKEN)
-            st.markdown(report_text)
+            
+            # (!!! FIX 2: THE DATE/TIME !!!)
+            # Get the *real* current time
+            current_time_utc = datetime.datetime.now(datetime.timezone.utc)
+            # Convert to Eastern Time for the report
+            eastern_time = current_time_utc.astimezone(datetime.timezone(datetime.timedelta(hours=-5)))
+            current_time_str = eastern_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+            report_text = get_ai_report(GEMINI_API_KEY, num_chunks, vandalism_count, current_time_str)
+            
+            # Display plain text report
+            st.text_area("Generated Report", report_text, height=200)
+
+            # (!!! FIX 4: THE PDF DOWNLOAD !!!)
+            pdf_data = create_pdf_report(report_text, current_time_str, vandalism_count)
+            st.download_button(
+                label="⬇️ Download Full PDF Report",
+                data=pdf_data,
+                file_name="NEC_EPRI_DAS_Report.pdf",
+                mime="application/pdf"
+            )

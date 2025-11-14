@@ -2,8 +2,8 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import librosa
-import matplotlib.pyplot as plt
-from matplotlib import cm
+import matplotlib.pyplot as plt 
+from matplotlib import cm # NEW: Import the colormap library
 from scipy.signal import butter, filtfilt
 import google.generativeai as genai
 from PIL import Image
@@ -34,7 +34,7 @@ def load_ai_model(hf_repo_name, hf_token):
         print("Model loaded successfully.")
         return processor, model
     except Exception as e:
-        st.error(f"Error loading AI model: {e}. Check your Hugf Face repo name and token.")
+        st.error(f"Error loading AI model: {e}. Check your Hugging Face repo name and token.")
         return None, None
 
 # --- 3. Load Our "Settings" ---
@@ -53,39 +53,36 @@ def highpass_filter(S, fs, cutoff, order):
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
 
-# --- (FIX 1: THE CRASH) ---
-# This is the new, robust, "memory-leak-proof" function
+# --- (!!!) THIS IS THE REAL, PROFESSIONAL FIX (!!!) ---
+# We are now *mathematically* creating the image, not "screenshotting" a plot.
 def create_heatmap_image(S_chunk):
-    # 1. Create a *specific* figure and axis
-    fig, ax = plt.subplots(figsize=(8, 6))
-    
-    # 2. Normalize and apply colormap
+    # 1. Calculate the robust color limits (from your script)
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0: r = 1.0
-    normalized_chunk = (np.clip(S_chunk, -r, r) + r) / (2 * r)
+    vmin = -r
+    vmax = r
+
+    # 2. Normalize the chunk from -r to +r into a 0.0 to 1.0 scale
+    normalized_chunk = (np.clip(S_chunk.T, vmin, vmax) - vmin) / (vmax - vmin)
+
+    # 3. Apply the 'seismic' colormap *directly* to the data
+    # This converts our (800, 1000) array to a (800, 1000, 4) RGBA array
     cmap = cm.get_cmap('seismic')
-    rgba_image = cmap(normalized_chunk)
-    rgb_array = (rgba_image[:, :, :3] * 255).astype(np.uint8)
+    rgba_image_data = cmap(normalized_chunk)
     
-    # 3. Use the axis to show the image
-    ax.imshow(rgb_array, aspect='auto') # We show the *RGB array*
-    ax.axis('off')
+    # 4. Convert to a standard 8-bit (0-255) RGB image
+    # We multiply by 255 and take the first 3 channels (RGB),
+    # discarding the 4th (Alpha). This is a clean, 3-channel array.
+    rgb_array = (rgba_image_data[:, :, :3] * 255).astype(np.uint8)
     
-    # 4. Save the *specific figure* to the buffer
-    buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
-    
-    # 5. (CRITICAL) Explicitly close *this* figure
-    plt.close(fig)
-    
-    buf.seek(0)
-    return Image.open(buf)
+    # 5. Convert this *perfect* RGB array into a PIL Image
+    return Image.fromarray(rgb_array)
 
 # --- 5. Our AI "Brain" (The Gemini LLM) Function ---
 @st.cache_data
 def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, hf_token):
     try:
-        genai.configure(api_key=_gemini_api_key)
+        genai.configure(api_key=_gemini_api_key) # Use the passed-in key
         model = genai.GenerativeModel('models/gemini-flash-latest')
         
         if vandalism_count > 0:
@@ -122,8 +119,6 @@ st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="🔬", layout="
 
 # --- Sidebar ---
 with st.sidebar:
-    # --- (FIX 2: THE LOGO) ---
-    # We now load the logo *locally* from the GitHub repo
     st.image("nec_logo.jpg", width=200) 
     st.subheader("Configuration")
     st.write("""

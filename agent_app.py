@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import librosa
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy.signal import butter, filtfilt
@@ -11,8 +12,8 @@ import torch
 import math
 import os
 import io
-import datetime # NEW: To get the real date and time
-from fpdf import FPDF # NEW: To create the PDF
+import datetime 
+from fpdf import FPDF, XPos, YPos # NEW: Import the new position commands
 
 # --- (FIX 1) ROBUST IMPORT ---
 try:
@@ -24,8 +25,7 @@ except ImportError:
 from transformers import ViTForImageClassification
 
 # --- 1. Page Setup ---
-# (!!! FIX 1: THE ICON !!!)
-st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") # Changed icon
+st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") 
 
 # --- 2. Load Our "Engine" (The AI Model) ---
 @st.cache_resource
@@ -56,66 +56,58 @@ def highpass_filter(S, fs, cutoff, order):
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
 
-# (!!! FIX 3: THE CRASH ON SECOND UPLOAD !!!)
+# (FIX 3: THE CRASH ON SECOND UPLOAD)
 # This is the new, robust, "memory-leak-proof" function
 def create_heatmap_image(S_chunk):
-    # 1. Create a *specific* figure and axis
     fig, ax = plt.subplots(figsize=(8, 6))
     
-    # 2. Normalize and apply colormap
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0: r = 1.0
     vmin, vmax = -r, r
     normalized_chunk = (np.clip(S_chunk.T, vmin, vmax) - vmin) / (vmax - vmin)
-    cmap = cm.get_cmap('seismic')
+    
+    # (!!!) WARNING FIX: Use the new, modern matplotlib colormap command (!!!)
+    cmap = matplotlib.colormaps['seismic']
+    
     rgba_image_data = cmap(normalized_chunk)
     rgb_array = (rgba_image_data[:, :, :3] * 255).astype(np.uint8)
     
-    # 3. Use the axis to show the image
-    ax.imshow(rgb_array, aspect='auto') # We show the *RGB array*
+    ax.imshow(rgb_array, aspect='auto')
     ax.axis('off')
     
-    # 4. Save the *specific figure* to the buffer
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
-    
-    # 5. (CRITICAL) Explicitly close *this* figure to prevent memory leak
-    plt.close(fig)
+    plt.close(fig) # Explicitly close the figure
     
     buf.seek(0)
-    # 6. Return a *clean* RGB image
     return Image.open(buf).convert("RGB")
 
-# --- (!!! FIX 4: PDF DOWNLOAD FUNCTION !!!) ---
+# --- (FIX 4: PDF DOWNLOAD FUNCTION) ---
 def create_pdf_report(report_text, current_time, vandalism_count):
     pdf = FPDF()
     pdf.add_page()
-    
-    # 1. Add the Logo (from the local repo file)
     pdf.image("nec_logo.jpg", x=10, y=8, w=60)
-    pdf.ln(25) # Move down below the logo
+    pdf.ln(25) 
     
-    # 2. Add the Title
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, "NEC & EPRI Grid Operations Meteorological Report", 0, 1, 'C')
+    # (!!!) WARNING FIX: Use "Helvetica" (core font) instead of "Arial" (!!!)
+    pdf.set_font("Helvetica", 'B', 16)
+    # (!!!) WARNING FIX: Use new_x and new_y instead of ln=1 (!!!)
+    pdf.cell(0, 10, "NEC & EPRI Grid Operations Meteorological Report", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     
-    # 3. Add the *Correct* Issuance Time
-    pdf.set_font("Arial", '', 12)
-    pdf.cell(0, 10, f"Issuance Time: {current_time}", 0, 1, 'C')
+    pdf.set_font("Helvetica", '', 12)
+    pdf.cell(0, 10, f"Issuance Time: {current_time}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     pdf.ln(5)
     
-    # 4. Add System Info
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, f"System: NEC LS3300 DAS System", 0, 1, 'L')
-    pdf.cell(0, 10, f"Alert Level: {'CRITICAL' if vandalism_count > 0 else 'NORMAL'}", 0, 1, 'L')
+    pdf.set_font("Helvetica", 'B', 12)
+    pdf.cell(0, 10, f"System: NEC LS3300 DAS System", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
+    pdf.cell(0, 10, f"Alert Level: {'CRITICAL' if vandalism_count > 0 else 'NORMAL'}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='L')
     pdf.ln(5)
     
-    # 5. Add the AI Report Body
-    pdf.set_font("Arial", '', 11)
-    pdf.multi_cell(0, 5, report_text) # multi_cell handles line breaks
+    pdf.set_font("Helvetica", '', 11)
+    pdf.multi_cell(0, 5, report_text)
     
-    # 6. Return the PDF data as 'bytes'
-    return bytes(pdf.output(dest='S'))
+    # (!!!) WARNING FIX: Use output() (dest='S' is the default) (!!!)
+    return bytes(pdf.output())
 
 # --- 5. Our AI "Brain" (The Gemini LLM) Function ---
 @st.cache_data
@@ -133,8 +125,7 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
             analysis = f"Analysis complete. All {total_chunks} 0.2-second chunks match the 'ambient' signature."
             recommendation = "No anomalies detected. The line is operating under normal conditions."
 
-        # (!!! FIX 2: THE AI HALLUCINATION !!!)
-        # We are now injecting the *real* data into the prompt
+        # (FIX 2: THE AI HALLUCINATION)
         prompt = f"""
         You are an expert NEC & EPRI DAS (Distributed Acoustic Sensing) system monitor.
         Your task is to write a *brief, 2-paragraph* fault analysis report.
@@ -193,10 +184,9 @@ if not model:
     st.stop()
 
 st.subheader("1. Upload a DAS Sensor File")
-# (!!! FIX 3: THE CRASH ON SECOND UPLOAD !!!)
+# (FIX 3: THE CRASH ON SECOND UPLOAD)
 # We have *removed* the broken 'key=' hack. The memory leak is
-# fixed in the 'create_heatmap_image' function, which is the
-# professional, correct solution.
+# fixed in the 'create_heatmap_image' function.
 uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"])
 
 if uploaded_file is not None:
@@ -225,10 +215,8 @@ if uploaded_file is not None:
             end_index = start_index + CHUNK_SAMPLES
             S_chunk = S_final[start_index:end_index, :]
             
-            # 1. Create the heatmap image *in memory* (NEW, ROBUST METHOD)
             heatmap_image_rgb = create_heatmap_image(S_chunk)
             
-            # 2. Process and predict (passing a *list* of one)
             inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
             with torch.no_grad():
                 outputs = model(**inputs)
@@ -261,19 +249,16 @@ if uploaded_file is not None:
     else:
         with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
             
-            # (!!! FIX 2: THE DATE/TIME !!!)
-            # Get the *real* current time
+            # (FIX 2: THE DATE/TIME)
             current_time_utc = datetime.datetime.now(datetime.timezone.utc)
-            # Convert to Eastern Time for the report (ET is UTC-5)
             eastern_time = current_time_utc.astimezone(datetime.timezone(datetime.timedelta(hours=-5)))
             current_time_str = eastern_time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
             report_text = get_ai_report(GEMINI_API_KEY, num_chunks, vandalism_count, current_time_str)
             
-            # Display plain text report
             st.text_area("Generated Report (Plain Text)", report_text, height=175)
 
-            # (!!! FIX 4: THE PDF DOWNLOAD !!!)
+            # (FIX 4: THE PDF DOWNLOAD)
             pdf_data = create_pdf_report(report_text, current_time_str, vandalism_count)
             st.download_button(
                 label="⬇️ Download Full PDF Report",

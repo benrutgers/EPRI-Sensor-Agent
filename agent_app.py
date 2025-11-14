@@ -175,6 +175,15 @@ if uploaded_file is not None:
             
             # 1. Create the heatmap image in memory
             heatmap_image = create_heatmap_image(S_chunk)
+
+
+            # 1. Create the heatmap image in memory (returns an RGBA image)
+            heatmap_image = create_heatmap_image(S_chunk)
+
+    
+            # Convert the 4-channel RGBA image to 3-channel RGB
+            heatmap_image_rgb = heatmap_image.convert("RGB")
+
             
             # 2. Process and predict with our AI "Eyes"
             inputs = processor(images=heatmap_image, return_tensors="pt")
@@ -216,3 +225,4 @@ if uploaded_file is not None:
             report_text = get_ai_report(GEMINI_API_KEY, num_chunks, vandalism_count, HF_TOKEN)
 
             st.markdown(report_text)
+

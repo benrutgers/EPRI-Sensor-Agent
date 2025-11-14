@@ -14,7 +14,7 @@ import io
 import datetime # NEW: To get the real date and time
 from fpdf import FPDF # NEW: To create the PDF
 
-# --- (FIX) ROBUST IMPORT ---
+# --- (FIX 1) ROBUST IMPORT ---
 try:
     from transformers import ViTImageProcessor as ViTProcessor
 except ImportError:
@@ -91,7 +91,7 @@ def create_pdf_report(report_text, current_time, vandalism_count):
     pdf = FPDF()
     pdf.add_page()
     
-    # 1. Add the Logo
+    # 1. Add the Logo (from the local repo file)
     pdf.image("nec_logo.jpg", x=10, y=8, w=60)
     pdf.ln(25) # Move down below the logo
     
@@ -182,7 +182,7 @@ with st.sidebar:
     HF_REPO_NAME = "benrutgers/epri-das-classifier" # This is correct
 
 # --- Main App Body ---
-st.title("🔬 NEC & EPRI | DAS Fault Detection Agent") # Icon is fixed in browser tab
+st.title("⚡ NEC & EPRI | DAS Fault Detection Agent") # Icon is fixed
 
 if not HF_TOKEN:
     st.error("Hugging Face token not set in Secrets. Cannot load AI model.")
@@ -193,7 +193,11 @@ if not model:
     st.stop()
 
 st.subheader("1. Upload a DAS Sensor File")
-uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"], key=f"uploader_{random.randint(1,10000)}")
+# (!!! FIX 3: THE CRASH ON SECOND UPLOAD !!!)
+# We have *removed* the broken 'key=' hack. The memory leak is
+# fixed in the 'create_heatmap_image' function, which is the
+# professional, correct solution.
+uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"])
 
 if uploaded_file is not None:
     st.success(f"Successfully loaded file: {uploaded_file.name}")
@@ -221,8 +225,10 @@ if uploaded_file is not None:
             end_index = start_index + CHUNK_SAMPLES
             S_chunk = S_final[start_index:end_index, :]
             
+            # 1. Create the heatmap image *in memory* (NEW, ROBUST METHOD)
             heatmap_image_rgb = create_heatmap_image(S_chunk)
             
+            # 2. Process and predict (passing a *list* of one)
             inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
             with torch.no_grad():
                 outputs = model(**inputs)
@@ -258,14 +264,14 @@ if uploaded_file is not None:
             # (!!! FIX 2: THE DATE/TIME !!!)
             # Get the *real* current time
             current_time_utc = datetime.datetime.now(datetime.timezone.utc)
-            # Convert to Eastern Time for the report
+            # Convert to Eastern Time for the report (ET is UTC-5)
             eastern_time = current_time_utc.astimezone(datetime.timezone(datetime.timedelta(hours=-5)))
             current_time_str = eastern_time.strftime("%Y-%m-%d %H:%M:%S %Z")
 
             report_text = get_ai_report(GEMINI_API_KEY, num_chunks, vandalism_count, current_time_str)
             
             # Display plain text report
-            st.text_area("Generated Report", report_text, height=200)
+            st.text_area("Generated Report (Plain Text)", report_text, height=175)
 
             # (!!! FIX 4: THE PDF DOWNLOAD !!!)
             pdf_data = create_pdf_report(report_text, current_time_str, vandalism_count)

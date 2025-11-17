@@ -19,6 +19,9 @@ import datetime
 from fpdf import FPDF, XPos, YPos
 import gc  # for manual garbage collection
 
+# Pre-create colormap once (faster than looking up every time)
+CMAP = matplotlib.colormaps["seismic"]
+
 # --- Robust transformers import ---
 try:
     from transformers import ViTImageProcessor as ViTProcessor
@@ -65,24 +68,18 @@ def highpass_filter(S, fs, cutoff, order):
 
 
 # --- 5. Heatmap Image Creation (no matplotlib figures) ---
-def create_heatmap_image(S_chunk):
+def create_heatmap_image(S_chunk, vmin, vmax, cmap):
     """
     Convert a DAS chunk (time x channels) into a heatmap-like RGB image
     WITHOUT creating any matplotlib figures.
 
+    vmin, vmax, cmap are precomputed once per file for speed.
     Returns a PIL.Image in RGB mode.
     """
-    # Percentile-based clipping
-    r = np.percentile(np.abs(S_chunk), VPCT)
-    if r == 0:
-        r = 1.00
-    vmin, vmax = -r, r
-
     # Normalize to [0, 1]; transpose so shape is (channels, time) -> (H, W)
     normalized_chunk = (np.clip(S_chunk.T, vmin, vmax) - vmin) / (vmax - vmin)
 
-    # Apply the 'seismic' colormap directly
-    cmap = matplotlib.colormaps["seismic"]
+    # Apply the colormap directly
     rgba = cmap(normalized_chunk, bytes=True)   # (H, W, 4), uint8
     rgb = rgba[:, :, :3]                        # drop alpha channel
 
@@ -264,6 +261,13 @@ if uploaded_file is not None:
         total_samples = S_final.shape[0]
         num_chunks = math.floor(total_samples / CHUNK_SAMPLES)
 
+        # --- NEW: precompute percentile/clipping ONCE per file ---
+        r = np.percentile(np.abs(S_final), VPCT)
+        if r == 0:
+            r = 1.0
+        vmin, vmax = -r, r
+        cmap = CMAP  # already created once globally
+
         st.write(
             f"File has {nt} time steps. "
             f"Slicing into {num_chunks} 0.2-second chunks for analysis..."
@@ -279,8 +283,8 @@ if uploaded_file is not None:
             end_index = start_index + CHUNK_SAMPLES
             S_chunk = S_final[start_index:end_index, :]
 
-            # Create heatmap image without matplotlib figures
-            heatmap_image_rgb = create_heatmap_image(S_chunk)
+            # Create heatmap image using precomputed vmin/vmax/cmap
+            heatmap_image_rgb = create_heatmap_image(S_chunk, vmin, vmax, cmap)
 
             inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
             with torch.no_grad():

@@ -156,8 +156,14 @@ def create_pdf_report(report_text, current_time, vandalism_count):
     safe_text = _sanitize_for_pdf(report_text)
     pdf.multi_cell(0, 5, safe_text)
 
-    # Get PDF bytes in a safe way
-    pdf_bytes = pdf.output(dest="S").encode("latin-1")
+    # fpdf2 2.8.5: output(dest="S") returns a bytearray already in PDF format
+    raw = pdf.output(dest="S")
+    if isinstance(raw, (bytes, bytearray)):
+        pdf_bytes = bytes(raw)
+    else:
+        # Older behavior (string): encode explicitly
+        pdf_bytes = raw.encode("latin-1", "replace")
+
     return pdf_bytes
 
 
@@ -358,5 +364,3 @@ if uploaded_file is not None:
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-

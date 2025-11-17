@@ -19,7 +19,7 @@ import datetime
 from fpdf import FPDF, XPos, YPos
 import gc  # for manual garbage collection
 
-# Pre-create colormap once (faster than looking up every time)
+# Pre-create colormap once (no effect on accuracy)
 CMAP = matplotlib.colormaps["seismic"]
 
 # --- Robust transformers import ---
@@ -49,7 +49,7 @@ def load_ai_model(hf_repo_name, hf_token):
         return None, None
 
 
-# --- 3. Global Settings ---
+# --- 3. Global Settings (unchanged) ---
 FS = 5000.0
 HP_CUTOFF = 20.0
 HP_ORDER = 4
@@ -68,21 +68,32 @@ def highpass_filter(S, fs, cutoff, order):
 
 
 # --- 5. Heatmap Image Creation (no matplotlib figures) ---
-def create_heatmap_image(S_chunk, vmin, vmax, cmap):
+def create_heatmap_image(S_chunk):
     """
-    Convert a DAS chunk (time x channels) into a heatmap-like RGB image
-    WITHOUT creating any matplotlib figures.
+    Convert a DAS chunk (time x channels) into a heatmap-like RGB image.
 
-    vmin, vmax, cmap are precomputed once per file for speed.
-    Returns a PIL.Image in RGB mode.
+    IMPORTANT: This matches your original preprocessing logic:
+      - Per-chunk percentile VPCT over |S_chunk|
+      - Clip to [-r, r]
+      - Normalize to [0, 1]
+      - Apply 'seismic' colormap and convert to uint8 RGB
+    Only difference: we do NOT create a matplotlib Figure/Axes.
     """
-    # Normalize to [0, 1]; transpose so shape is (channels, time) -> (H, W)
+
+    # 1) Percentile-based clipping PER CHUNK (same as original app)
+    r = np.percentile(np.abs(S_chunk), VPCT)
+    if r == 0:
+        r = 1.00
+    vmin, vmax = -r, r
+
+    # 2) Normalize to [0, 1]; transpose so shape is (channels, time) -> (H, W)
     normalized_chunk = (np.clip(S_chunk.T, vmin, vmax) - vmin) / (vmax - vmin)
 
-    # Apply the colormap directly
-    rgba = cmap(normalized_chunk, bytes=True)   # (H, W, 4), uint8
-    rgb = rgba[:, :, :3]                        # drop alpha channel
+    # 3) Apply the 'seismic' colormap EXACTLY like original code
+    rgba = CMAP(normalized_chunk)                 # float32 in [0, 1]
+    rgb = (rgba[:, :, :3] * 255).astype(np.uint8) # to uint8 RGB
 
+    # 4) Convert to a PIL image for ViT
     img = Image.fromarray(rgb, mode="RGB")
     return img
 
@@ -261,13 +272,6 @@ if uploaded_file is not None:
         total_samples = S_final.shape[0]
         num_chunks = math.floor(total_samples / CHUNK_SAMPLES)
 
-        # --- NEW: precompute percentile/clipping ONCE per file ---
-        r = np.percentile(np.abs(S_final), VPCT)
-        if r == 0:
-            r = 1.0
-        vmin, vmax = -r, r
-        cmap = CMAP  # already created once globally
-
         st.write(
             f"File has {nt} time steps. "
             f"Slicing into {num_chunks} 0.2-second chunks for analysis..."
@@ -283,8 +287,8 @@ if uploaded_file is not None:
             end_index = start_index + CHUNK_SAMPLES
             S_chunk = S_final[start_index:end_index, :]
 
-            # Create heatmap image using precomputed vmin/vmax/cmap
-            heatmap_image_rgb = create_heatmap_image(S_chunk, vmin, vmax, cmap)
+            # Create heatmap image with per-chunk normalization (original behavior)
+            heatmap_image_rgb = create_heatmap_image(S_chunk)
 
             inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
             with torch.no_grad():

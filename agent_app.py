@@ -3,9 +3,8 @@ import numpy as np
 import pandas as pd
 import librosa
 import matplotlib
-# (!!!) THIS IS THE FIX (!!!)
-# This is the professional, "sledgehammer" fix for the memory leak.
-# It tells matplotlib: "You are on a server. Do NOT use a GUI."
+# (!!!) FIX 1: THE CRASH ON SECOND UPLOAD (Part A) (!!!)
+# This is the professional, "sledgehammer" fix for the *matplotlib* memory leak.
 matplotlib.use("Agg") 
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -17,7 +16,7 @@ import math
 import os
 import io
 import datetime 
-from fpdf import FPDF, XPos, YPos # We need these for the PDF
+from fpdf import FPDF, XPos, YPos 
 
 # (FIX: ROBUST IMPORT)
 try:
@@ -60,43 +59,38 @@ def highpass_filter(S, fs, cutoff, order):
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
 
-# (FIX 1: THE CRASH ON SECOND UPLOAD)
-# This is the robust, "memory-leak-proof" function
+# (FIX 1: THE CRASH ON SECOND UPLOAD (Part B))
+# This is the robust, "memory-leak-proof" image creation function
 def create_heatmap_image(S_chunk):
-    # 1. Create a *specific* figure and axis
     fig, ax = plt.subplots(figsize=(8, 6))
     
-    # 2. Normalize and apply colormap
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0: r = 1.0
     vmin, vmax = -r, r
     normalized_chunk = (np.clip(S_chunk.T, vmin, vmax) - vmin) / (vmax - vmin)
     
-    cmap = matplotlib.colormaps['seismic'] # Use modern command
+    cmap = matplotlib.colormaps['seismic'] 
     
     rgba_image_data = cmap(normalized_chunk)
     rgb_array = (rgba_image_data[:, :, :3] * 255).astype(np.uint8)
     
-    # 3. Use the axis to show the image
-    ax.imshow(rgb_array, aspect='auto') # We show the *RGB array*
+    ax.imshow(rgb_array, aspect='auto')
     ax.axis('off')
     
-    # 4. Save the *specific figure* to the buffer
     buf = io.BytesIO()
-    # We save the *figure* (fig), not the global state (plt)
     fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
     
-    # 5. (CRITICAL) We explicitly close the figure to prevent the memory leak.
+    # (CRITICAL) We explicitly close the figure to prevent the memory leak.
     plt.close(fig) 
     
     buf.seek(0)
     return Image.open(buf).convert("RGB") # Return a clean RGB image
 
-# --- (FIX 4: PDF DOWNLOAD FUNCTION) ---
+# --- PDF DOWNLOAD FUNCTION ---
 def create_pdf_report(report_text, current_time, vandalism_count):
     pdf = FPDF()
     pdf.add_page()
-    pdf.image("nec_logo.jpg", x=10, y=8, w=60) # Loads logo from local repo
+    pdf.image("nec_logo.jpg", x=10, y=8, w=60) 
     pdf.ln(25) 
     
     pdf.set_font("Helvetica", 'B', 16)
@@ -132,7 +126,6 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
             analysis = f"Analysis complete. All {total_chunks} 0.2-second chunks match the 'ambient' signature."
             recommendation = "No anomalies detected. The line is operating under normal conditions."
 
-        # (FIX 3: THE AI HALLUCINATION)
         prompt = f"""
         You are an expert NEC & EPRI DAS (Distributed Acoustic Sensing) system monitor.
         Your task is to write a *brief, 2-paragraph* fault analysis report.
@@ -160,11 +153,11 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
         return f"Error generating report: {e}"
 
 # --- 6. The Streamlit App GUI ---
-st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") # ICON FIX
+st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") 
 
 # --- Sidebar ---
 with st.sidebar:
-    st.image("nec_logo.jpg", width=200) # LOGO FIX
+    st.image("nec_logo.jpg", width=200) 
     st.subheader("Configuration")
     st.write("""
     This app uses a custom-trained AI (ViT) model to analyze .npy files 
@@ -177,10 +170,10 @@ with st.sidebar:
     GEMINI_API_KEY = st.secrets.get("GOOGLE_AI_API_KEY")
     HF_TOKEN = st.secrets.get("HF_TOKEN")
     
-    HF_REPO_NAME = "benrutgers/epri-das-classifier" # This is correct
+    HF_REPO_NAME = "benrutgers/epri-das-classifier" 
 
 # --- Main App Body ---
-st.title("⚡ NEC & EPRI | DAS Fault Detection Agent") # Icon is fixed
+st.title("⚡ NEC & EPRI | DAS Fault Detection Agent") 
 
 if not HF_TOKEN:
     st.error("Hugging Face token not set in Secrets. Cannot load AI model.")
@@ -191,10 +184,14 @@ if not model:
     st.stop()
 
 st.subheader("1. Upload a DAS Sensor File")
-# (FIX 1: THE CRASH ON SECOND UPLOAD)
-# We have *removed* the broken 'key=' hack. The memory leak is
-# fixed by matplotlib.use("Agg") at the top of the script.
-uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"])
+
+# (!!!) THIS IS THE PROFESSIONAL FIX FOR THE CRASH (Part C) (!!!)
+# 1. We initialize a 'key' in the session state
+if 'uploader_key' not in st.session_state:
+    st.session_state.uploader_key = 0
+
+# 2. We give the file_uploader this *stable* key
+uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"], key=st.session_state.uploader_key)
 
 if uploaded_file is not None:
     st.success(f"Successfully loaded file: {uploaded_file.name}")
@@ -229,7 +226,7 @@ if uploaded_file is not None:
                 outputs = model(**inputs)
             
             logits = outputs.logits
-            predicted_class_idx = logits.argmax(-1).item()
+            predicted_class_idx = logits.argmax(-1).item() # This was the typo
             predicted_class = model.config.id2label[predicted_class_idx]
             
             if predicted_class == "vandalism":
@@ -256,7 +253,6 @@ if uploaded_file is not None:
     else:
         with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
             
-            # (FIX 3: THE DATE/TIME)
             current_time_utc = datetime.datetime.now(datetime.timezone.utc)
             eastern_time = current_time_utc.astimezone(datetime.timezone(datetime.timedelta(hours=-5)))
             current_time_str = eastern_time.strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -265,7 +261,6 @@ if uploaded_file is not None:
             
             st.text_area("Generated Report (Plain Text)", report_text, height=175)
 
-            # (FIX 4: THE PDF DOWNLOAD)
             pdf_data = create_pdf_report(report_text, current_time_str, vandalism_count)
             st.download_button(
                 label="⬇️ Download Full PDF Report",
@@ -273,3 +268,8 @@ if uploaded_file is not None:
                 file_name="NEC_EPRI_DAS_Report.pdf",
                 mime="application/pdf"
             )
+
+    # (!!!) THIS IS THE PROFESSIONAL FIX FOR THE CRASH (Part D) (!!!)
+    # 3. After the *entire run* is complete, we increment the key.
+    # This forces the file_uploader to reset its state.
+    st.session_state.uploader_key += 1

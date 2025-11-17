@@ -229,14 +229,10 @@ if not model:
 
 st.subheader("1. Upload a DAS Sensor File")
 
-# (!!!) FIX 3: STABLE, STRING-BASED UPLOADER KEY (!!!)
-if "uploader_key" not in st.session_state:
-    st.session_state.uploader_key = 0
-
+# SIMPLE, STABLE UPLOADER (no dynamic key)
 uploaded_file = st.file_uploader(
     "Upload a .npy file from the DAS interrogator",
     type=["npy"],
-    key=f"uploader_{st.session_state.uploader_key}",
 )
 
 if uploaded_file is not None:
@@ -339,7 +335,7 @@ if uploaded_file is not None:
                 mime="application/pdf",
             )
 
-    # --- Cleanup & Reset Uploader ---
+    # --- Cleanup (but NO uploader reset) ---
     try:
         del S, S_filtered, S_final
     except NameError:
@@ -348,6 +344,3 @@ if uploaded_file is not None:
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-
-    # Force the file_uploader to reset its internal state for the next run
-    st.session_state.uploader_key += 1

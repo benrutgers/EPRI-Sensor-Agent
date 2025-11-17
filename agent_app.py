@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import librosa
 import matplotlib
-# (FIX 1: THE CRASH ON SECOND UPLOAD)
+# (!!!) THIS IS THE FIX (!!!)
 # This is the professional, "sledgehammer" fix for the memory leak.
 # It tells matplotlib: "You are on a server. Do NOT use a GUI."
 matplotlib.use("Agg") 
@@ -16,8 +16,8 @@ import torch
 import math
 import os
 import io
-import datetime # (FIX 3: THE AI HALLUCINATION)
-from fpdf import FPDF, XPos, YPos # (FIX 4: THE PDF DOWNLOAD)
+import datetime 
+from fpdf import FPDF, XPos, YPos # We need these for the PDF
 
 # (FIX: ROBUST IMPORT)
 try:
@@ -29,7 +29,6 @@ except ImportError:
 from transformers import ViTForImageClassification
 
 # --- 1. Page Setup ---
-# (FIX 5: THE ICON)
 st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") 
 
 # --- 2. Load Our "Engine" (The AI Model) ---
@@ -64,8 +63,10 @@ def highpass_filter(S, fs, cutoff, order):
 # (FIX 1: THE CRASH ON SECOND UPLOAD)
 # This is the robust, "memory-leak-proof" function
 def create_heatmap_image(S_chunk):
+    # 1. Create a *specific* figure and axis
     fig, ax = plt.subplots(figsize=(8, 6))
     
+    # 2. Normalize and apply colormap
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0: r = 1.0
     vmin, vmax = -r, r
@@ -76,16 +77,20 @@ def create_heatmap_image(S_chunk):
     rgba_image_data = cmap(normalized_chunk)
     rgb_array = (rgba_image_data[:, :, :3] * 255).astype(np.uint8)
     
-    ax.imshow(rgb_array, aspect='auto')
+    # 3. Use the axis to show the image
+    ax.imshow(rgb_array, aspect='auto') # We show the *RGB array*
     ax.axis('off')
     
+    # 4. Save the *specific figure* to the buffer
     buf = io.BytesIO()
+    # We save the *figure* (fig), not the global state (plt)
     fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
     
+    # 5. (CRITICAL) We explicitly close the figure to prevent the memory leak.
     plt.close(fig) 
     
     buf.seek(0)
-    return Image.open(buf).convert("RGB")
+    return Image.open(buf).convert("RGB") # Return a clean RGB image
 
 # --- (FIX 4: PDF DOWNLOAD FUNCTION) ---
 def create_pdf_report(report_text, current_time, vandalism_count):
@@ -127,7 +132,7 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
             analysis = f"Analysis complete. All {total_chunks} 0.2-second chunks match the 'ambient' signature."
             recommendation = "No anomalies detected. The line is operating under normal conditions."
 
-        # (!!! FIX 3: THE AI HALLUCINATION !!!)
+        # (FIX 3: THE AI HALLUCINATION)
         prompt = f"""
         You are an expert NEC & EPRI DAS (Distributed Acoustic Sensing) system monitor.
         Your task is to write a *brief, 2-paragraph* fault analysis report.
@@ -187,7 +192,8 @@ if not model:
 
 st.subheader("1. Upload a DAS Sensor File")
 # (FIX 1: THE CRASH ON SECOND UPLOAD)
-# We have *removed* the broken 'key=' hack.
+# We have *removed* the broken 'key=' hack. The memory leak is
+# fixed by matplotlib.use("Agg") at the top of the script.
 uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"])
 
 if uploaded_file is not None:
@@ -223,11 +229,7 @@ if uploaded_file is not None:
                 outputs = model(**inputs)
             
             logits = outputs.logits
-            
-            # (!!!) THIS IS THE TYPO FIX (!!!)
-            # It is now '-1' (the number one)
             predicted_class_idx = logits.argmax(-1).item()
-            
             predicted_class = model.config.id2label[predicted_class_idx]
             
             if predicted_class == "vandalism":

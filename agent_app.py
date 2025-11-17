@@ -5,7 +5,7 @@ import pandas as pd
 import librosa
 import matplotlib
 
-# (!!!) USE NON-INTERACTIVE BACKEND FOR MATPLOTLIB (!!!)
+# Use non-interactive backend for matplotlib
 matplotlib.use("Agg")
 
 from scipy.signal import butter, filtfilt
@@ -19,7 +19,7 @@ import datetime
 from fpdf import FPDF, XPos, YPos
 import gc  # for manual garbage collection
 
-# (FIX: ROBUST IMPORT)
+# --- Robust transformers import ---
 try:
     from transformers import ViTImageProcessor as ViTProcessor
 except ImportError:
@@ -46,7 +46,7 @@ def load_ai_model(hf_repo_name, hf_token):
         return None, None
 
 
-# --- 3. Load Our "Settings" ---
+# --- 3. Global Settings ---
 FS = 5000.0
 HP_CUTOFF = 20.0
 HP_ORDER = 4
@@ -56,7 +56,7 @@ DPI = 100
 CHUNK_SAMPLES = int(FS * CHUNK_SECONDS)
 
 
-# --- 4. Professional Signal Processing Functions ---
+# --- 4. Signal Processing ---
 def highpass_filter(S, fs, cutoff, order):
     nyq = 0.5 * fs
     normal_cutoff = cutoff / nyq
@@ -64,7 +64,7 @@ def highpass_filter(S, fs, cutoff, order):
     return filtfilt(b, a, S, axis=0)
 
 
-# (!!!) REMOVE MATPLOTLIB FIGURES FROM THE HOT LOOP (!!!)
+# --- 5. Heatmap Image Creation (no matplotlib figures) ---
 def create_heatmap_image(S_chunk):
     """
     Convert a DAS chunk (time x channels) into a heatmap-like RGB image
@@ -72,28 +72,36 @@ def create_heatmap_image(S_chunk):
 
     Returns a PIL.Image in RGB mode.
     """
-    # 1. Percentile-based clipping
+    # Percentile-based clipping
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0:
         r = 1.00
     vmin, vmax = -r, r
 
-    # 2. Normalize to [0, 1]
-    # Transpose so shape is (channels, time) -> (H, W) for an image
+    # Normalize to [0, 1]; transpose so shape is (channels, time) -> (H, W)
     normalized_chunk = (np.clip(S_chunk.T, vmin, vmax) - vmin) / (vmax - vmin)
 
-    # 3. Apply the 'seismic' colormap directly (no figure)
+    # Apply the 'seismic' colormap directly
     cmap = matplotlib.colormaps["seismic"]
-    # bytes=True returns uint8 RGBA in [0, 255]
-    rgba = cmap(normalized_chunk, bytes=True)   # shape: (H, W, 4), dtype=uint8
+    rgba = cmap(normalized_chunk, bytes=True)   # (H, W, 4), uint8
     rgb = rgba[:, :, :3]                        # drop alpha channel
 
-    # 4. Convert to a PIL image for ViT
     img = Image.fromarray(rgb, mode="RGB")
     return img
 
 
-# --- PDF DOWNLOAD FUNCTION ---
+# --- 6. Helper to sanitize text for FPDF (Latin-1 only) ---
+def _sanitize_for_pdf(text: str) -> str:
+    """
+    Ensure the text only contains characters that the default FPDF
+    Latin-1 fonts can handle. Unsupported chars are replaced with '?'.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
+# --- 7. PDF DOWNLOAD FUNCTION ---
 def create_pdf_report(report_text, current_time, vandalism_count):
     pdf = FPDF()
     pdf.add_page()
@@ -127,7 +135,7 @@ def create_pdf_report(report_text, current_time, vandalism_count):
     pdf.cell(
         0,
         10,
-        f"System: NEC LS3300 DAS System",
+        "System: NEC LS3300 DAS System",
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
         align='L'
@@ -143,12 +151,17 @@ def create_pdf_report(report_text, current_time, vandalism_count):
     pdf.ln(5)
 
     pdf.set_font("Helvetica", '', 11)
-    pdf.multi_cell(0, 5, report_text)
 
-    return bytes(pdf.output())
+    # Sanitize report text so FPDF doesn't choke on Unicode
+    safe_text = _sanitize_for_pdf(report_text)
+    pdf.multi_cell(0, 5, safe_text)
+
+    # Get PDF bytes in a safe way
+    pdf_bytes = pdf.output(dest="S").encode("latin-1")
+    return pdf_bytes
 
 
-# --- 5. Our AI "Brain" (The Gemini LLM) Function ---
+# --- 8. Gemini LLM report ---
 @st.cache_data
 def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
     try:
@@ -157,12 +170,8 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
 
         if vandalism_count > 0:
             alert_level = "CRITICAL"
-            analysis = f"VANDALISM DETECTED. The AI model identified {vandalism_count} distinct 0.2-second chunks that match the 'vandalism' signature."
-            recommendation = "This is a high-confidence detection. Recommend immediate visual inspection of the fiber line for security breach or damage."
         else:
             alert_level = "NORMAL"
-            analysis = f"Analysis complete. All {total_chunks} 0.2-second chunks match the 'ambient' signature."
-            recommendation = "No anomalies detected. The line is operating under normal conditions."
 
         prompt = f"""
         You are an expert NEC & EPRI DAS (Distributed Acoustic Sensing) system monitor.
@@ -192,7 +201,7 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
         return f"Error generating report: {e}"
 
 
-# --- 6. Sidebar ---
+# --- 9. Sidebar ---
 with st.sidebar:
     st.image("nec_logo.jpg", width=200)
     st.subheader("Configuration")
@@ -215,7 +224,7 @@ with st.sidebar:
     HF_REPO_NAME = "benrutgers/epri-das-classifier"
 
 
-# --- 7. Main App Body ---
+# --- 10. Main App Body ---
 st.title("⚡ NEC & EPRI | DAS Fault Detection Agent")
 
 if not HF_TOKEN:
@@ -228,7 +237,7 @@ if not model:
 
 st.subheader("1. Upload a DAS Sensor File")
 
-# STABLE UPLOADER WITH FIXED KEY (no manual session_state write)
+# Stable uploader key; we do NOT manually write to this session_state key
 uploaded_file = st.file_uploader(
     "Upload a .npy file from the DAS interrogator",
     type=["npy"],
@@ -264,7 +273,7 @@ if uploaded_file is not None:
             end_index = start_index + CHUNK_SAMPLES
             S_chunk = S_final[start_index:end_index, :]
 
-            # Create heatmap image WITHOUT matplotlib figures
+            # Create heatmap image without matplotlib figures
             heatmap_image_rgb = create_heatmap_image(S_chunk)
 
             inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
@@ -280,7 +289,7 @@ if uploaded_file is not None:
             else:
                 ambient_count += 1
 
-            # free per-chunk intermediates ASAP
+            # Free per-chunk intermediates ASAP
             del inputs, outputs, logits
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -293,7 +302,7 @@ if uploaded_file is not None:
         progress_bar.empty()
         st.success("Analysis Complete.")
 
-    # --- Results ---
+    # --- 11. Results ---
     st.subheader("2. Analysis Results")
     col1, col2 = st.columns(2)
     col1.metric("Total Chunks Analyzed", f"{num_chunks}")
@@ -306,7 +315,7 @@ if uploaded_file is not None:
     else:
         col2.metric("VANDALISM EVENTS DETECTED", "0")
 
-    # --- AI Report ---
+    # --- 12. AI Report + PDF ---
     st.subheader("3. AI Agent Report")
 
     if not GEMINI_API_KEY:
@@ -340,7 +349,7 @@ if uploaded_file is not None:
                 mime="application/pdf",
             )
 
-    # --- Cleanup (no widget state writes) ---
+    # --- 13. Cleanup ---
     try:
         del S, S_filtered, S_final, uploaded_file
     except NameError:
@@ -349,3 +358,5 @@ if uploaded_file is not None:
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+
+

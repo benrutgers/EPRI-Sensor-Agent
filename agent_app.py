@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import librosa
 import matplotlib
-# (!!!) THIS IS THE FIX (!!!)
+# (FIX 1: THE CRASH ON SECOND UPLOAD)
 # This is the professional, "sledgehammer" fix for the memory leak.
 # It tells matplotlib: "You are on a server. Do NOT use a GUI."
 matplotlib.use("Agg") 
@@ -16,8 +16,8 @@ import torch
 import math
 import os
 import io
-import datetime 
-from fpdf import FPDF, XPos, YPos # We need these for the PDF
+import datetime # (FIX 3: THE AI HALLUCINATION)
+from fpdf import FPDF, XPos, YPos # (FIX 4: THE PDF DOWNLOAD)
 
 # (FIX: ROBUST IMPORT)
 try:
@@ -29,6 +29,7 @@ except ImportError:
 from transformers import ViTForImageClassification
 
 # --- 1. Page Setup ---
+# (FIX 5: THE ICON)
 st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide") 
 
 # --- 2. Load Our "Engine" (The AI Model) ---
@@ -60,7 +61,8 @@ def highpass_filter(S, fs, cutoff, order):
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
 
-# This is our robust, "memory-leak-proof" image function
+# (FIX 1: THE CRASH ON SECOND UPLOAD)
+# This is the robust, "memory-leak-proof" function
 def create_heatmap_image(S_chunk):
     fig, ax = plt.subplots(figsize=(8, 6))
     
@@ -80,13 +82,12 @@ def create_heatmap_image(S_chunk):
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
     
-    # (CRITICAL) We explicitly close the figure to prevent the memory leak.
     plt.close(fig) 
     
     buf.seek(0)
-    return Image.open(buf).convert("RGB") # Return a clean RGB image
+    return Image.open(buf).convert("RGB")
 
-# --- PDF DOWNLOAD FUNCTION ---
+# --- (FIX 4: PDF DOWNLOAD FUNCTION) ---
 def create_pdf_report(report_text, current_time, vandalism_count):
     pdf = FPDF()
     pdf.add_page()
@@ -126,7 +127,7 @@ def get_ai_report(_gemini_api_key, total_chunks, vandalism_count, current_time):
             analysis = f"Analysis complete. All {total_chunks} 0.2-second chunks match the 'ambient' signature."
             recommendation = "No anomalies detected. The line is operating under normal conditions."
 
-        # This is our correct, "non-hallucinating" prompt
+        # (!!! FIX 3: THE AI HALLUCINATION !!!)
         prompt = f"""
         You are an expert NEC & EPRI DAS (Distributed Acoustic Sensing) system monitor.
         Your task is to write a *brief, 2-paragraph* fault analysis report.
@@ -185,9 +186,8 @@ if not model:
     st.stop()
 
 st.subheader("1. Upload a DAS Sensor File")
-# (!!! FIX 1: THE CRASH ON SECOND UPLOAD !!!)
-# We have *removed* the broken 'key=' hack. The memory leak is
-# fixed by matplotlib.use("Agg") at the top of the script.
+# (FIX 1: THE CRASH ON SECOND UPLOAD)
+# We have *removed* the broken 'key=' hack.
 uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"])
 
 if uploaded_file is not None:
@@ -223,7 +223,11 @@ if uploaded_file is not None:
                 outputs = model(**inputs)
             
             logits = outputs.logits
-            predicted_class_idx = logits.argmax(-_1).item()
+            
+            # (!!!) THIS IS THE TYPO FIX (!!!)
+            # It is now '-1' (the number one)
+            predicted_class_idx = logits.argmax(-1).item()
+            
             predicted_class = model.config.id2label[predicted_class_idx]
             
             if predicted_class == "vandalism":
@@ -250,7 +254,7 @@ if uploaded_file is not None:
     else:
         with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
             
-            # (!!! FIX 2: THE DATE/TIME !!!)
+            # (FIX 3: THE DATE/TIME)
             current_time_utc = datetime.datetime.now(datetime.timezone.utc)
             eastern_time = current_time_utc.astimezone(datetime.timezone(datetime.timedelta(hours=-5)))
             current_time_str = eastern_time.strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -259,7 +263,7 @@ if uploaded_file is not None:
             
             st.text_area("Generated Report (Plain Text)", report_text, height=175)
 
-            # (!!! FIX 4: THE PDF DOWNLOAD !!!)
+            # (FIX 4: THE PDF DOWNLOAD)
             pdf_data = create_pdf_report(report_text, current_time_str, vandalism_count)
             st.download_button(
                 label="⬇️ Download Full PDF Report",

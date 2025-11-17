@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import librosa
 import matplotlib
-# (!!!) FIX 1: THE CRASH ON SECOND UPLOAD (Part A) (!!!)
-# This is the professional, "sledgehammer" fix for the *matplotlib* memory leak.
+# (FIX 1A: THE CRASH)
+# This tells matplotlib "You are on a server. Do NOT use a GUI."
 matplotlib.use("Agg") 
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -17,6 +17,7 @@ import os
 import io
 import datetime 
 from fpdf import FPDF, XPos, YPos 
+import gc # (!!!) THIS IS THE REAL FIX (Part 1) (!!!)
 
 # (FIX: ROBUST IMPORT)
 try:
@@ -59,7 +60,7 @@ def highpass_filter(S, fs, cutoff, order):
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
 
-# (FIX 1: THE CRASH ON SECOND UPLOAD (Part B))
+# (FIX 1B: THE CRASH)
 # This is the robust, "memory-leak-proof" image creation function
 def create_heatmap_image(S_chunk):
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -80,11 +81,10 @@ def create_heatmap_image(S_chunk):
     buf = io.BytesIO()
     fig.savefig(buf, format='png', dpi=DPI, bbox_inches='tight', pad_inches=0)
     
-    # (CRITICAL) We explicitly close the figure to prevent the memory leak.
     plt.close(fig) 
     
     buf.seek(0)
-    return Image.open(buf).convert("RGB") # Return a clean RGB image
+    return Image.open(buf).convert("RGB") 
 
 # --- PDF DOWNLOAD FUNCTION ---
 def create_pdf_report(report_text, current_time, vandalism_count):
@@ -184,14 +184,7 @@ if not model:
     st.stop()
 
 st.subheader("1. Upload a DAS Sensor File")
-
-# (!!!) THIS IS THE PROFESSIONAL FIX FOR THE CRASH (Part C) (!!!)
-# 1. We initialize a 'key' in the session state
-if 'uploader_key' not in st.session_state:
-    st.session_state.uploader_key = 0
-
-# 2. We give the file_uploader this *stable* key
-uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"], key=st.session_state.uploader_key)
+uploaded_file = st.file_uploader("Upload a .npy file from the DAS interrogator", type=["npy"])
 
 if uploaded_file is not None:
     st.success(f"Successfully loaded file: {uploaded_file.name}")
@@ -235,6 +228,12 @@ if uploaded_file is not None:
                 ambient_count += 1
             
             progress_bar.progress((i + 1) / num_chunks, text=f"Analyzing chunk {i+1}/{num_chunks}")
+            
+            # (!!!) THIS IS THE REAL FIX (Part 2) (!!!)
+            # We are now manually "taking out the trash" after *every* loop
+            # to prevent the memory leak and crash.
+            del S_chunk, heatmap_image_rgb, inputs, outputs, logits
+            gc.collect() # Force the "janitor" to run
         
         progress_bar.empty()
         st.success(f"Analysis Complete.")
@@ -268,8 +267,3 @@ if uploaded_file is not None:
                 file_name="NEC_EPRI_DAS_Report.pdf",
                 mime="application/pdf"
             )
-
-    # (!!!) THIS IS THE PROFESSIONAL FIX FOR THE CRASH (Part D) (!!!)
-    # 3. After the *entire run* is complete, we increment the key.
-    # This forces the file_uploader to reset its state.
-    st.session_state.uploader_key += 1

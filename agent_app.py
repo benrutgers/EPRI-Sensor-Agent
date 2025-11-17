@@ -34,41 +34,54 @@ from transformers import ViTForImageClassification
 # --- 1. Page Setup (call ONCE) ---
 st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide")
 
-# ---------- Global CSS for a more polished UI ----------
+# ---------- Global CSS for a more polished / wider banner UI ----------
 CUSTOM_CSS = """
 <style>
 /* Make the main content a bit wider and cleaner */
 .block-container {
-    padding-top: 1.5rem;
-    padding-bottom: 2rem;
+    padding-top: 1.25rem;
+    padding-bottom: 2.0rem;
     padding-left: 3rem;
     padding-right: 3rem;
 }
 
-/* Top header styling */
+/* Top header styling: full-width bar across the page */
 .nec-header {
-    padding: 0.75rem 1.5rem;
-    border-radius: 0.75rem;
+    padding: 1.0rem 3.0rem;
+    margin-left: -3rem;   /* cancel the block-container padding so bar spans full width */
+    margin-right: -3rem;
+    margin-bottom: 1.0rem;
     background: linear-gradient(90deg, #001f3f, #003366);
     color: #ffffff;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 1.0rem;
     box-shadow: 0 4px 10px rgba(0,0,0,0.25);
 }
+
+/* Add a slight rounded edge only at the bottom so it feels like a top app bar */
+.nec-header {
+    border-radius: 0 0 0.75rem 0.75rem;
+}
+
 .nec-header-left {
     display: flex;
     flex-direction: column;
+    max-width: 100%;
 }
+
+/* Title and subtitle now wrapped more comfortably inside a taller bar */
 .nec-header-title {
-    font-size: 1.4rem;
+    font-size: 1.25rem;
     font-weight: 700;
     letter-spacing: 0.04em;
+    line-height: 1.3;
+    margin-bottom: 0.15rem;
+    word-wrap: break-word;
 }
 .nec-header-subtitle {
     font-size: 0.85rem;
-    opacity: 0.85;
+    opacity: 0.90;
 }
 
 /* Section card */
@@ -125,6 +138,25 @@ CUSTOM_CSS = """
 textarea {
     font-size: 0.82rem !important;
     line-height: 1.4 !important;
+}
+
+/* Responsive tweaks for smaller screens */
+@media (max-width: 900px) {
+    .block-container {
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+    }
+    .nec-header {
+        margin-left: -1.5rem;
+        margin-right: -1.5rem;
+        padding: 0.9rem 1.5rem;
+    }
+    .nec-header-title {
+        font-size: 1.05rem;
+    }
+    .nec-header-subtitle {
+        font-size: 0.75rem;
+    }
 }
 </style>
 """
@@ -513,7 +545,7 @@ def main():
         else:
             # Call Gemini + build PDF once per file
             if st.session_state.report_text is None or st.session_state.pdf_data is None:
-                with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
+                with st.spinner("DAS Agent is writing the report..."):
                     current_time_utc = datetime.datetime.now(datetime.timezone.utc)
                     eastern_time = current_time_utc.astimezone(
                         datetime.timezone(datetime.timedelta(hours=-5))

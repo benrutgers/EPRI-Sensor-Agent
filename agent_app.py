@@ -34,34 +34,38 @@ from transformers import ViTForImageClassification
 # --- 1. Page Setup (call ONCE) ---
 st.set_page_config(page_title="NEC & EPRI DAS Agent", page_icon="⚡", layout="wide")
 
-# ---------- Global CSS for a more polished / wider banner UI ----------
+# ---------- Global CSS for a more polished / better header UI ----------
 CUSTOM_CSS = """
 <style>
-/* Make the main content a bit wider and cleaner */
+/* Layout of the main content */
 .block-container {
-    padding-top: 1.25rem;
+    padding-top: 0.75rem;
     padding-bottom: 2.0rem;
     padding-left: 3rem;
     padding-right: 3rem;
 }
 
-/* Top header styling: full-width bar across the page */
+/* Top header styling: full-width bar across page with breathing room */
 .nec-header {
-    padding: 1.0rem 3.0rem;
-    margin-left: -3rem;   /* cancel the block-container padding so bar spans full width */
+    margin-top: 0.75rem;          /* space above the banner */
+    margin-left: -3rem;           /* cancel container padding so bar spans full width */
     margin-right: -3rem;
     margin-bottom: 1.0rem;
+
+    padding-top: 1.15rem;         /* more vertical padding */
+    padding-bottom: 0.95rem;
+    padding-left: 3.0rem;
+    padding-right: 3.0rem;
+
     background: linear-gradient(90deg, #001f3f, #003366);
     color: #ffffff;
     display: flex;
     align-items: center;
     justify-content: space-between;
     box-shadow: 0 4px 10px rgba(0,0,0,0.25);
-}
 
-/* Add a slight rounded edge only at the bottom so it feels like a top app bar */
-.nec-header {
-    border-radius: 0 0 0.75rem 0.75rem;
+    /* Rounded on all corners so it feels like a card, not clipped */
+    border-radius: 0.75rem;
 }
 
 .nec-header-left {
@@ -70,13 +74,13 @@ CUSTOM_CSS = """
     max-width: 100%;
 }
 
-/* Title and subtitle now wrapped more comfortably inside a taller bar */
+/* Title and subtitle now fit comfortably inside the taller bar */
 .nec-header-title {
-    font-size: 1.25rem;
+    font-size: 1.15rem;
     font-weight: 700;
     letter-spacing: 0.04em;
-    line-height: 1.3;
-    margin-bottom: 0.15rem;
+    line-height: 1.35;
+    margin-bottom: 0.2rem;
     word-wrap: break-word;
 }
 .nec-header-subtitle {
@@ -149,10 +153,13 @@ textarea {
     .nec-header {
         margin-left: -1.5rem;
         margin-right: -1.5rem;
-        padding: 0.9rem 1.5rem;
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+        padding-top: 1.0rem;
+        padding-bottom: 0.9rem;
     }
     .nec-header-title {
-        font-size: 1.05rem;
+        font-size: 1.0rem;
     }
     .nec-header-subtitle {
         font-size: 0.75rem;
@@ -195,8 +202,7 @@ def highpass_filter(S, fs, cutoff, order):
 def create_heatmap_image(S_chunk):
     """
     Convert a DAS chunk (time x channels) into a heatmap-like RGB image.
-    Detection behavior is unchanged from your previous version:
-    per-chunk percentile clipping + 'seismic' colormap.
+    Detection behavior is unchanged: per-chunk percentile clipping + 'seismic' colormap.
     """
     r = np.percentile(np.abs(S_chunk), VPCT)
     if r == 0:
@@ -545,7 +551,7 @@ def main():
         else:
             # Call Gemini + build PDF once per file
             if st.session_state.report_text is None or st.session_state.pdf_data is None:
-                with st.spinner("DAS Agent is writing the report..."):
+                with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
                     current_time_utc = datetime.datetime.now(datetime.timezone.utc)
                     eastern_time = current_time_utc.astimezone(
                         datetime.timezone(datetime.timedelta(hours=-5))

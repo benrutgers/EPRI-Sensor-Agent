@@ -5,7 +5,7 @@ import pandas as pd
 import librosa
 import matplotlib
 
-# (!!!) FIX 1: USE NON-INTERACTIVE BACKEND FOR MATPLOTLIB (!!!)
+# (!!!) USE NON-INTERACTIVE BACKEND FOR MATPLOTLIB (!!!)
 matplotlib.use("Agg")
 
 from scipy.signal import butter, filtfilt
@@ -64,8 +64,7 @@ def highpass_filter(S, fs, cutoff, order):
     return filtfilt(b, a, S, axis=0)
 
 
-# (!!!) FIX 2: REMOVE MATPLOTLIB FIGURES FROM THE HOT LOOP (!!!)
-# We directly map the DAS chunk -> colormap -> RGB image, no plt.figure / savefig.
+# (!!!)  REMOVE MATPLOTLIB FIGURES FROM THE HOT LOOP (!!!)
 def create_heatmap_image(S_chunk):
     """
     Convert a DAS chunk (time x channels) into a heatmap-like RGB image
@@ -229,10 +228,11 @@ if not model:
 
 st.subheader("1. Upload a DAS Sensor File")
 
-# SIMPLE, STABLE UPLOADER (no dynamic key)
+# STABLE UPLOADER WITH EXPLICIT STATE CLEAR
 uploaded_file = st.file_uploader(
     "Upload a .npy file from the DAS interrogator",
     type=["npy"],
+    key="npy_uploader",
 )
 
 if uploaded_file is not None:
@@ -279,6 +279,11 @@ if uploaded_file is not None:
                 vandalism_count += 1
             else:
                 ambient_count += 1
+
+            # free per-chunk intermediates ASAP
+            del inputs, outputs, logits
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
             progress_bar.progress(
                 (i + 1) / num_chunks,
@@ -335,11 +340,16 @@ if uploaded_file is not None:
                 mime="application/pdf",
             )
 
-    # --- Cleanup (but NO uploader reset) ---
+    # --- Cleanup & Uploader State Reset ---
+    # Clear the file from Streamlit's widget state so it doesn't accumulate in memory
+    st.session_state["npy_uploader"] = None
+
+    # Drop large arrays
     try:
-        del S, S_filtered, S_final
+        del S, S_filtered, S_final, uploaded_file
     except NameError:
         pass
+
     gc.collect()
 
     if torch.cuda.is_available():

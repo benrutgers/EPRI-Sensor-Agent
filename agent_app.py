@@ -19,7 +19,7 @@ import datetime
 from fpdf import FPDF, XPos, YPos
 import gc  # for manual garbage collection
 
-# Pre-create colormap once (no effect on accuracy)
+# Pre-create colormap once
 CMAP = matplotlib.colormaps["seismic"]
 
 # --- Robust transformers import ---
@@ -50,18 +50,18 @@ def load_ai_model(hf_repo_name, hf_token):
 
 
 # --- 3. Global Settings (unchanged) ---
-FS = 5000.0
-HP_CUTOFF = 20.0
+FS = 5000.00
+HP_CUTOFF = 20.00
 HP_ORDER = 4
-VPCT = 99.0
-CHUNK_SECONDS = 0.2
+VPCT = 99.00
+CHUNK_SECONDS = 0.20
 DPI = 100
 CHUNK_SAMPLES = int(FS * CHUNK_SECONDS)
 
 
 # --- 4. Signal Processing ---
 def highpass_filter(S, fs, cutoff, order):
-    nyq = 0.5 * fs
+    nyq = 0.50 * fs
     normal_cutoff = cutoff / nyq
     b, a = butter(order, normal_cutoff, btype="high", analog=False)
     return filtfilt(b, a, S, axis=0)
@@ -72,12 +72,11 @@ def create_heatmap_image(S_chunk):
     """
     Convert a DAS chunk (time x channels) into a heatmap-like RGB image.
 
-    IMPORTANT: This matches your original preprocessing logic:
+    IMPORTANT: This matches the original preprocessing logic:
       - Per-chunk percentile VPCT over |S_chunk|
       - Clip to [-r, r]
       - Normalize to [0, 1]
       - Apply 'seismic' colormap and convert to uint8 RGB
-    Only difference: we do NOT create a matplotlib Figure/Axes.
     """
 
     # 1) Percentile-based clipping PER CHUNK (same as original app)
@@ -122,7 +121,7 @@ def create_pdf_report(report_text, current_time, vandalism_count):
     pdf.cell(
         0,
         10,
-        "NEC & EPRI Grid Operations Meteorological Report",
+        "NEC & EPRI Power Grid Monitoring Report",
         new_x=XPos.LMARGIN,
         new_y=YPos.NEXT,
         align='C'
@@ -249,126 +248,175 @@ processor, model = load_ai_model(HF_REPO_NAME, HF_TOKEN)
 if not model:
     st.stop()
 
+# --- Session state setup for caching per-file results ---
+if "file_info" not in st.session_state:
+    st.session_state.file_info = None
+    st.session_state.num_chunks = None
+    st.session_state.vandalism_count = None
+    st.session_state.report_text = None
+    st.session_state.pdf_data = None
+    st.session_state.current_time_str = None
+
 st.subheader("1. Upload a DAS Sensor File")
 
-# Stable uploader key; we do NOT manually write to this session_state key
 uploaded_file = st.file_uploader(
     "Upload a .npy file from the DAS interrogator",
     type=["npy"],
     key="npy_uploader",
 )
 
+# Allow clearing / resetting if user removes file
+if uploaded_file is None:
+    st.session_state.file_info = None
+    st.session_state.num_chunks = None
+    st.session_state.vandalism_count = None
+    st.session_state.report_text = None
+    st.session_state.pdf_data = None
+    st.session_state.current_time_str = None
+
 if uploaded_file is not None:
-    st.success(f"Successfully loaded file: {uploaded_file.name}")
+    current_info = (uploaded_file.name, uploaded_file.size)
+    is_new_file = (st.session_state.file_info != current_info)
 
-    with st.spinner(f"Processing '{uploaded_file.name}'... This may take a moment."):
-        # Load and preprocess signal
-        S = np.load(uploaded_file).astype(np.float32)
-        nt, nx = S.shape
+    if is_new_file:
+        # New file uploaded -> reset results and run analysis
+        st.session_state.file_info = current_info
+        st.session_state.num_chunks = None
+        st.session_state.vandalism_count = None
+        st.session_state.report_text = None
+        st.session_state.pdf_data = None
+        st.session_state.current_time_str = None
 
-        S_filtered = highpass_filter(S, fs=FS, cutoff=HP_CUTOFF, order=HP_ORDER)
-        S_final = S_filtered - S_filtered.mean(axis=0, keepdims=True)
+        st.success(f"Successfully loaded file: {uploaded_file.name}")
 
-        total_samples = S_final.shape[0]
-        num_chunks = math.floor(total_samples / CHUNK_SAMPLES)
+        with st.spinner(f"Processing '{uploaded_file.name}'... This may take a moment."):
 
-        st.write(
-            f"File has {nt} time steps. "
-            f"Slicing into {num_chunks} 0.2-second chunks for analysis..."
-        )
+            # Load and preprocess signal
+            S = np.load(uploaded_file).astype(np.float32)
+            nt, nx = S.shape
 
-        vandalism_count = 0
-        ambient_count = 0
+            S_filtered = highpass_filter(S, fs=FS, cutoff=HP_CUTOFF, order=HP_ORDER)
+            S_final = S_filtered - S_filtered.mean(axis=0, keepdims=True)
 
-        progress_bar = st.progress(0, text="Analyzing chunks...")
+            total_samples = S_final.shape[0]
+            num_chunks = math.floor(total_samples / CHUNK_SAMPLES)
 
-        for i in range(num_chunks):
-            start_index = i * CHUNK_SAMPLES
-            end_index = start_index + CHUNK_SAMPLES
-            S_chunk = S_final[start_index:end_index, :]
+            st.write(
+                f"File has {nt} time steps. "
+                f"Slicing into {num_chunks} 0.2-second chunks for analysis..."
+            )
 
-            # Create heatmap image with per-chunk normalization (original behavior)
-            heatmap_image_rgb = create_heatmap_image(S_chunk)
+            vandalism_count = 0
+            ambient_count = 0
 
-            inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
-            with torch.no_grad():
-                outputs = model(**inputs)
+            progress_bar = st.progress(0, text="Analyzing chunks...")
 
-            logits = outputs.logits
-            predicted_class_idx = logits.argmax(-1).item()
-            predicted_class = model.config.id2label[predicted_class_idx]
+            for i in range(num_chunks):
+                start_index = i * CHUNK_SAMPLES
+                end_index = start_index + CHUNK_SAMPLES
+                S_chunk = S_final[start_index:end_index, :]
 
-            if predicted_class == "vandalism":
-                vandalism_count += 1
-            else:
-                ambient_count += 1
+                # Per-chunk heatmap image (original behavior)
+                heatmap_image_rgb = create_heatmap_image(S_chunk)
 
-            # Free per-chunk intermediates ASAP
-            del inputs, outputs, logits
+                inputs = processor(images=[heatmap_image_rgb], return_tensors="pt")
+                with torch.no_grad():
+                    outputs = model(**inputs)
+
+                logits = outputs.logits
+                predicted_class_idx = logits.argmax(-1).item()
+                predicted_class = model.config.id2label[predicted_class_idx]
+
+                if predicted_class == "vandalism":
+                    vandalism_count += 1
+                else:
+                    ambient_count += 1
+
+                # Free per-chunk intermediates ASAP
+                del inputs, outputs, logits
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                progress_bar.progress(
+                    (i + 1) / num_chunks,
+                    text=f"Analyzing chunk {i+1}/{num_chunks}",
+                )
+
+            progress_bar.empty()
+            st.success("Analysis Complete.")
+
+            # Save summary stats to session_state
+            st.session_state.num_chunks = num_chunks
+            st.session_state.vandalism_count = vandalism_count
+
+            # Clean up big arrays
+            try:
+                del S, S_filtered, S_final
+            except NameError:
+                pass
+            gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            progress_bar.progress(
-                (i + 1) / num_chunks,
-                text=f"Analyzing chunk {i+1}/{num_chunks}",
+    # --- Show analysis results if we have them ---
+    if st.session_state.num_chunks is not None:
+        st.subheader("2. Analysis Results")
+        col1, col2 = st.columns(2)
+        col1.metric("Total Chunks Analyzed", f"{st.session_state.num_chunks}")
+        if st.session_state.vandalism_count and st.session_state.vandalism_count > 0:
+            col2.metric(
+                "VANDALISM EVENTS DETECTED",
+                f"{st.session_state.vandalism_count}",
+                delta_color="inverse",
+            )
+        else:
+            col2.metric("VANDALISM EVENTS DETECTED", "0")
+
+        # --- 3. AI Agent Report ---
+        st.subheader("3. AI Agent Report")
+
+        if not GEMINI_API_KEY:
+            st.error("Google AI API Key not set in Secrets. Cannot generate report.")
+        else:
+            # Only call Gemini + build PDF once per file
+            if st.session_state.report_text is None or st.session_state.pdf_data is None:
+                with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
+                    current_time_utc = datetime.datetime.now(datetime.timezone.utc)
+                    eastern_time = current_time_utc.astimezone(
+                        datetime.timezone(datetime.timedelta(hours=-5))
+                    )
+                    current_time_str = eastern_time.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+                    report_text = get_ai_report(
+                        GEMINI_API_KEY,
+                        st.session_state.num_chunks,
+                        st.session_state.vandalism_count,
+                        current_time_str,
+                    )
+
+                    pdf_data = create_pdf_report(
+                        report_text,
+                        current_time_str,
+                        st.session_state.vandalism_count,
+                    )
+
+                    st.session_state.current_time_str = current_time_str
+                    st.session_state.report_text = report_text
+                    st.session_state.pdf_data = pdf_data
+
+            # Display cached report + download button
+            st.text_area(
+                "Generated Report (Plain Text)",
+                st.session_state.report_text or "",
+                height=200,
             )
 
-        progress_bar.empty()
-        st.success("Analysis Complete.")
-
-    # --- 11. Results ---
-    st.subheader("2. Analysis Results")
-    col1, col2 = st.columns(2)
-    col1.metric("Total Chunks Analyzed", f"{num_chunks}")
-    if vandalism_count > 0:
-        col2.metric(
-            "VANDALISM EVENTS DETECTED",
-            f"{vandalism_count}",
-            delta_color="inverse",
-        )
-    else:
-        col2.metric("VANDALISM EVENTS DETECTED", "0")
-
-    # --- 12. AI Report + PDF ---
-    st.subheader("3. AI Agent Report")
-
-    if not GEMINI_API_KEY:
-        st.error("Google AI API Key not set in Secrets. Cannot generate report.")
-    else:
-        with st.spinner("AI 'Brain' (Gemini) is writing the report..."):
-            current_time_utc = datetime.datetime.now(datetime.timezone.utc)
-            eastern_time = current_time_utc.astimezone(
-                datetime.timezone(datetime.timedelta(hours=-5))
-            )
-            current_time_str = eastern_time.strftime("%Y-%m-%d %H:%M:%S %Z")
-
-            report_text = get_ai_report(
-                GEMINI_API_KEY,
-                num_chunks,
-                vandalism_count,
-                current_time_str,
-            )
-
-            st.text_area("Generated Report (Plain Text)", report_text, height=175)
-
-            pdf_data = create_pdf_report(
-                report_text,
-                current_time_str,
-                vandalism_count,
-            )
-            st.download_button(
-                label="⬇️ Download Full PDF Report",
-                data=pdf_data,
-                file_name="NEC_EPRI_DAS_Report.pdf",
-                mime="application/pdf",
-            )
-
-    # --- 13. Cleanup ---
-    try:
-        del S, S_filtered, S_final, uploaded_file
-    except NameError:
-        pass
-    gc.collect()
-
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+            if st.session_state.pdf_data is not None:
+                st.download_button(
+                    label="⬇️ Download Full PDF Report",
+                    data=st.session_state.pdf_data,
+                    file_name="NEC_EPRI_DAS_Report.pdf",
+                    mime="application/pdf",
+                )
+            else:
+                st.warning("PDF data is not available.")

@@ -64,7 +64,7 @@ def highpass_filter(S, fs, cutoff, order):
     return filtfilt(b, a, S, axis=0)
 
 
-# (!!!)  REMOVE MATPLOTLIB FIGURES FROM THE HOT LOOP (!!!)
+# (!!!) REMOVE MATPLOTLIB FIGURES FROM THE HOT LOOP (!!!)
 def create_heatmap_image(S_chunk):
     """
     Convert a DAS chunk (time x channels) into a heatmap-like RGB image
@@ -228,7 +228,7 @@ if not model:
 
 st.subheader("1. Upload a DAS Sensor File")
 
-# STABLE UPLOADER WITH EXPLICIT STATE CLEAR
+# STABLE UPLOADER WITH FIXED KEY (no manual session_state write)
 uploaded_file = st.file_uploader(
     "Upload a .npy file from the DAS interrogator",
     type=["npy"],
@@ -340,16 +340,11 @@ if uploaded_file is not None:
                 mime="application/pdf",
             )
 
-    # --- Cleanup & Uploader State Reset ---
-    # Clear the file from Streamlit's widget state so it doesn't accumulate in memory
-    st.session_state["npy_uploader"] = None
-
-    # Drop large arrays
+    # --- Cleanup (no widget state writes) ---
     try:
         del S, S_filtered, S_final, uploaded_file
     except NameError:
         pass
-
     gc.collect()
 
     if torch.cuda.is_available():
